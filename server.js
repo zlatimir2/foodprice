@@ -5,15 +5,26 @@ const fs = require('fs').promises;
 const path = require('path');
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3000; // Changed to 3000 to match Dockerfile
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: '*', // Allow all origins
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type']
+}));
 app.use(express.json());
-app.use(express.static('.')); // Serve static files from current directory
+app.use(express.static('public')); // Changed to serve from public directory
 
-// Store browser instance
+// Increase timeout for long operations
+app.use((req, res, next) => {
+    res.setTimeout(120000); // 2 minute timeout
+    next();
+});
+
+// Store browser instance and last scraping time
 let browser;
+let lastScrapingTime = null;
 
 // Function to save data to JSON file
 async function saveToJson(data, category) {
@@ -50,19 +61,48 @@ async function loadFromJson(category) {
     }
 }
 
+// Add this function after loadFromJson
+function validateProduct(product) {
+    return {
+        ...product,
+        title: product.title || 'Неизвестен продукт',
+        store: product.store || 'Неизвестен магазин',
+        price: typeof product.price === 'number' ? product.price : null,
+        oldPrice: typeof product.oldPrice === 'number' ? product.oldPrice : null,
+        discount: product.discount || '',
+        unit: product.unit || '',
+        basePrice: product.basePrice || '',
+        subtitle: product.subtitle || '',
+        image: product.image || '',
+        isMeatProduct: !!product.isMeatProduct
+    };
+}
+
 // Initialize browser on server start
 async function initBrowser() {
     try {
-        browser = await puppeteer.launch({
-            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+        const isWindows = process.platform === 'win32';
+        const options = {
+            headless: 'new',
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
                 '--disable-dev-shm-usage',
                 '--disable-gpu'
-            ],
-            headless: 'new'
-        });
+            ]
+        };
+
+        // If we're in Docker/Linux, use the installed Chrome
+        if (!isWindows) {
+            options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable';
+        }
+        // On Windows, let Puppeteer use the bundled Chromium
+        else {
+            const puppeteer = require('puppeteer');
+            delete options.executablePath;
+        }
+
+        browser = await (isWindows ? require('puppeteer') : puppeteer).launch(options);
         console.log('Browser initialized successfully');
     } catch (error) {
         console.error('Failed to initialize browser:', error);
@@ -201,7 +241,7 @@ async function scrapeKauflandProducts() {
     }
 }
 
-// Modify the existing scrapeMeatProducts function
+// Modify the scrapeMeatProducts function
 async function scrapeMeatProducts() {
     try {
         // Try to load cached data
@@ -213,7 +253,7 @@ async function scrapeMeatProducts() {
             
             if (cacheAge < twentyFourHours) {
                 console.log('Returning cached products');
-                return cached.data;
+                return cached.data.map(validateProduct);
             }
         }
 
@@ -225,8 +265,8 @@ async function scrapeMeatProducts() {
             scrapeBillaProducts()
         ]);
 
-        // Combine products from both stores
-        const allProducts = [...kauflandProducts, ...billaProducts];
+        // Combine and validate products from both stores
+        const allProducts = [...kauflandProducts, ...billaProducts].map(validateProduct);
         
         // Save to JSON for cache
         await saveToJson(allProducts, 'meat');
@@ -238,7 +278,7 @@ async function scrapeMeatProducts() {
         const cached = await loadFromJson('meat');
         if (cached) {
             console.log('Returning cached data due to scraping error');
-            return cached.data;
+            return cached.data.map(validateProduct);
         }
         throw error;
     }
@@ -270,20 +310,68 @@ function scheduleDailyScraping() {
 // API Endpoints
 app.get('/api/scrape/meat', async (req, res) => {
     try {
+        if (!browser) {
+            await initBrowser();
+        }
+        
         const products = await scrapeMeatProducts();
+        lastScrapingTime = Date.now();
+        
         res.json({
+            success: true,
             products: products,
             lastScraped: new Date(lastScrapingTime).toISOString(),
-            fromCache: !shouldScrape()
+            totalProducts: products.length
         });
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('Error in /api/scrape/meat endpoint:', error);
+        
+        // Try to recover browser if it crashed
+        if (!browser) {
+            try {
+                await initBrowser();
+            } catch (browserError) {
+                console.error('Failed to recover browser:', browserError);
+            }
+        }
+        
+        // Return cached data if available
+        try {
+            const cached = await loadFromJson('meat');
+            if (cached && cached.data) {
+                return res.json({
+                    success: true,
+                    products: cached.data.map(validateProduct),
+                    lastScraped: new Date(cached.timestamp).toISOString(),
+                    fromCache: true,
+                    error: error.message
+                });
+            }
+        } catch (cacheError) {
+            console.error('Failed to load cache:', cacheError);
+        }
+        
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            details: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        });
     }
 });
 
 // Health check endpoint
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', lastScraped: lastScrapingTime ? new Date(lastScrapingTime).toISOString() : null });
+});
+
+// Add error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Unhandled error:', err);
+    res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? err.stack : undefined
+    });
 });
 
 // Initialize browser and start server
