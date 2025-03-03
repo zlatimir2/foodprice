@@ -52,25 +52,22 @@ async function loadFromJson(category) {
 
 // Initialize browser on server start
 async function initBrowser() {
-    const options = {
-        headless: "new",
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--disable-gpu',
-            '--window-size=1920x1080'
-        ]
-    };
-
-    // If running on Render.com, use their Chrome path
-    if (process.env.RENDER) {
-        options.executablePath = process.env.CHROME_PATH || '/usr/bin/google-chrome';
+    try {
+        browser = await puppeteer.launch({
+            executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || '/usr/bin/google-chrome-stable',
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu'
+            ],
+            headless: 'new'
+        });
+        console.log('Browser initialized successfully');
+    } catch (error) {
+        console.error('Failed to initialize browser:', error);
+        throw error;
     }
-
-    browser = await puppeteer.launch(options);
-    console.log('Browser initialized');
 }
 
 // Scraper function for Billa meat products
