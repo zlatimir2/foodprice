@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Месо и месни продукти</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+
+        .back-button {
+            display: inline-block;
+            padding: 10px 20px;
+            background-color: #333;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+
+        h1, h2 {
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        h2 {
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .kaufland-title {
+            background-color: rgba(225, 9, 21, 0.1);
+            color: #e10915;
+        }
+
+        .billa-title {
+            background-color: rgba(255, 237, 0, 0.2);
+            color: #333;
+        }
+
+        #loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 1.2em;
+            color: #666;
+        }
+
+        #error {
+            display: none;
+            color: red;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .store-section {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .product-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+        }
+
+        .product-card {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+
+        .product-name {
+            font-size: 1.1em;
+            margin-bottom: 5px;
+            color: #333;
+        }
+
+        .product-subtitle {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .price-info {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .current-price {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #e10915;
+        }
+
+        .old-price {
+            text-decoration: line-through;
+            color: #999;
+        }
+
+        .discount {
+            color: #e10915;
+            font-weight: bold;
+        }
+
+        @media (max-width: 768px) {
+            .product-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <a href="index.html" class="back-button">← Назад</a>
+    <h1>Месо и месни продукти</h1>
+    
+    <div id="loading">Зареждане на продукти...</div>
+    <div id="error">Грешка при зареждане на продуктите.</div>
+    
+    <div class="store-section">
+        <h2 class="kaufland-title">Kaufland</h2>
+        <div id="kaufland-products" class="product-grid"></div>
+    </div>
+    
+    <div class="store-section">
+        <h2 class="billa-title">Billa</h2>
+        <div id="billa-products" class="product-grid"></div>
+    </div>
+
+    <script>
+        async function fetchProducts() {
+            try {
+                const response = await fetch('http://localhost:3001/api/scrape/meat');
+                const data = await response.json();
+                
+                document.getElementById('loading').style.display = 'none';
+                
+                if (!data.products || data.products.length === 0) {
+                    throw new Error('Няма намерени продукти');
+                }
+
+                const kauflandContainer = document.getElementById('kaufland-products');
+                const billaContainer = document.getElementById('billa-products');
+
+                // Format price to always show 2 decimal places
+                const formatPrice = (price) => {
+                    return price ? price.toFixed(2) + ' лв.' : 'N/A';
+                };
+
+                // Create product card HTML
+                const createProductCard = (product) => {
+                    const card = document.createElement('div');
+                    card.className = 'product-card';
+                    
+                    card.innerHTML = `
+                        <div class="product-name">${product.title}</div>
+                        ${product.subtitle ? `<div class="product-subtitle">${product.subtitle}</div>` : ''}
+                        <div class="price-info">
+                            <span class="current-price">${formatPrice(product.price)}</span>
+                            ${product.oldPrice ? `
+                                <span class="old-price">${formatPrice(product.oldPrice)}</span>
+                                ${product.discount ? `<span class="discount">${product.discount}</span>` : ''}
+                            ` : ''}
+                        </div>
+                    `;
+                    return card;
+                };
+
+                // Sort products by store and add to appropriate container
+                data.products.forEach(product => {
+                    if (!product.isMeatProduct) return;
+
+                    if (product.store === 'Kaufland') {
+                        kauflandContainer.appendChild(createProductCard(product));
+                    } else if (product.store === 'Billa' && product.price) {
+                        billaContainer.appendChild(createProductCard(product));
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error:', error);
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('error').textContent = 'Грешка при зареждане на продуктите: ' + error.message;
+            }
+        }
+
+        fetchProducts();
+    </script>
+</body>
+</html> 
